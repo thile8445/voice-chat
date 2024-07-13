@@ -38,18 +38,22 @@ export const useAgoraRTM = ({
   };
 
   const initRtm = async (roomId, rtmUid) => {
-    rtmClient.current = AgoraRTM.createInstance(appId);
+    try {
+      rtmClient.current = AgoraRTM.createInstance(appId);
 
-    await rtmClient.current.login({ uid: rtmUid, token });
+      await rtmClient.current.login({ uid: rtmUid, token });
 
-    channelClient.current = rtmClient.current.createChannel(roomId);
-    await channelClient.current.join();
+      channelClient.current = rtmClient.current.createChannel(roomId);
+      await channelClient.current.join();
 
-    window.addEventListener("beforeunload", leaveRtmChannel);
+      window.addEventListener("beforeunload", leaveRtmChannel);
 
-    channelClient.current.on("MemberJoined", handleMemberJoined);
-    channelClient.current.on("MemberLeft", handleMemberLeft);
-    channelClient.current.on("ChannelMessage", handleMessage);
+      channelClient.current.on("MemberJoined", handleMemberJoined);
+      channelClient.current.on("MemberLeft", handleMemberLeft);
+      channelClient.current.on("ChannelMessage", handleMessage);
+    } catch (error) {
+      console.log("ccc error", error);
+    }
   };
 
   const addOrUpdateAttributes = async (data) => {

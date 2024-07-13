@@ -23,18 +23,22 @@ export const useAgoraRTC = ({ appId, token }) => {
   };
 
   const initRtc = async (roomId, rtcUid) => {
-    rtcClient.current = AgoraRTC.createClient({ mode: "rtc", codec: "vp8" });
+    try {
+      rtcClient.current = AgoraRTC.createClient({ mode: "rtc", codec: "vp8" });
 
-    rtcClient.current.on("user-published", handleUserPublished);
-    rtcClient.current.on("user-left", handleUserLeft);
-    await rtcClient.current.join(appId, roomId, token, rtcUid);
+      rtcClient.current.on("user-published", handleUserPublished);
+      rtcClient.current.on("user-left", handleUserLeft);
+      await rtcClient.current.join(appId, roomId, token, rtcUid);
 
-    audioTracks.current.localAudioTrack =
-      await AgoraRTC.createMicrophoneAudioTrack();
-    audioTracks.current.localAudioTrack.setMuted(micMuted);
-    await rtcClient.current.publish(audioTracks.current.localAudioTrack);
+      audioTracks.current.localAudioTrack =
+        await AgoraRTC.createMicrophoneAudioTrack();
+      audioTracks.current.localAudioTrack.setMuted(micMuted);
+      await rtcClient.current.publish(audioTracks.current.localAudioTrack);
 
-    initVolumeIndicator();
+      initVolumeIndicator();
+    } catch (error) {
+      console.log("ccc error", error);
+    }
   };
 
   const initVolumeIndicator = async (timeInterval = 200) => {

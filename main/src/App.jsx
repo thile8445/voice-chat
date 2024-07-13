@@ -17,6 +17,8 @@ import FeMale4 from "./assets/avatars/female-4.png";
 import FeMale5 from "./assets/avatars/female-5.png";
 import { useAgoraRTC } from "./useAgoraRTC";
 import { useAgoraRTM } from "./useAgoraRTM";
+import { roleCanMuteAll } from "./util";
+import { ROLES } from "./constants";
 
 function App() {
   const OPTIONS_AVATAR = [
@@ -71,6 +73,7 @@ function App() {
   const [avatarActive, setAvatarActive] = useState(null);
   const [username, setUsername] = useState("");
   const [roomId, setRoomId] = useState("");
+  const [userRole, setUserRole] = useState(ROLES.HOST); // Default role
 
   const [members, setMembers] = useState([]);
 
@@ -116,6 +119,8 @@ function App() {
     }
   };
 
+  const canMuteAll = roleCanMuteAll.includes(userRole);
+
   useEffect(() => {
     let idRoom = getRoomId() || "";
     setRoomId(idRoom);
@@ -130,6 +135,7 @@ function App() {
         "username",
         "rtcUid",
         "avatar",
+        "role"
       ]);
       listMember.push({
         ...data,
@@ -153,6 +159,7 @@ function App() {
       username,
       rtcUid: rtcUid?.toString(),
       avatar: avatarActive?.Image,
+      role: userRole,
     });
     await handleGetMembers();
 
@@ -210,7 +217,9 @@ function App() {
                       className={`user-avatar avatar-${item?.rtcUid}`}
                       src={item?.avatar}
                     />
-                    <p>{item?.username}</p>
+                    <p>
+                      {item?.username} - {item?.role}
+                    </p>
                   </div>
                 );
               })}
@@ -236,6 +245,17 @@ function App() {
                 );
               })}
             </div>
+            <select
+              id="role-select"
+              value={userRole}
+              onChange={(e) => setUserRole(e.target.value)}
+            >
+              {Object.entries(ROLES).map(([key, value]) => (
+                <option key={key} value={value}>
+                  {value}
+                </option>
+              ))}
+            </select>
 
             <div id="form-fields">
               <label>Display Name:</label>
