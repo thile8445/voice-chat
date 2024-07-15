@@ -52,6 +52,9 @@ body {
 .control-icon-active {
   background-color: ivory;
 }
+.control-icon-disable {
+  cursor: not-allowed;
+}
 
 
 

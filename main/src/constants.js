@@ -4,3 +4,8 @@ export const ROLES = {
   SPEAKER: "SPEAKER",
   LISTENER: "LISTENER",
 };
+
+export const TYPE_ACTION = {
+  MUTE_ALL: "MUTE_ALL",
+  MUTE_USER: "MUTE_USER",
+};

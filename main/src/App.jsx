@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import "./App.css";
 import LeaveIcon from "./assets/leave.svg";
 import MicOffIcon from "./assets/mic-off.svg";
@@ -15,10 +15,9 @@ import FeMale2 from "./assets/avatars/female-2.png";
 import FeMale3 from "./assets/avatars/female-3.png";
 import FeMale4 from "./assets/avatars/female-4.png";
 import FeMale5 from "./assets/avatars/female-5.png";
-import { useAgoraRTC } from "./useAgoraRTC";
-import { useAgoraRTM } from "./useAgoraRTM";
-import { roleCanMuteAll } from "./util";
-import { ROLES } from "./constants";
+import { ROLES, TYPE_ACTION } from "./constants";
+import { useAgoraVoiceChat } from "./useAgoraVoiceChat";
+import { ATTRIBUTES_VOICE_CHAT } from "./util";
 
 function App() {
   const OPTIONS_AVATAR = [
@@ -64,11 +63,10 @@ function App() {
     },
   ];
 
+  const rtmUid = useRef(String(Math.floor(Math.random() * 2032)));
+  const rtcUid = useRef(Math.floor(Math.random() * 2032))
   const token = null;
-  const rtcUid = Math.floor(Math.random() * 2032);
   const appId = "f412b67c2b19405b8d12625c11f5e4bc";
-
-  const rtmUid = String(Math.floor(Math.random() * 2032));
 
   const [avatarActive, setAvatarActive] = useState(null);
   const [username, setUsername] = useState("");
@@ -79,35 +77,21 @@ function App() {
 
   const [isJoin, setIsJoin] = useState(false);
 
-  const { initRtc, micMuted, toggleMic, leaveRoom, rtcClient } = useAgoraRTC({
-    appId,
-    token,
-  });
-
-  const handleMessage = useCallback(async (message) => {
-    const data = JSON.parse(message?.text);
-
-    if (data?.type?.includes("mute-user")) {
-      if (data?.userId.toString() === rtcClient?.uid.toString()) {
-        toggleMic();
-      }
-    } else if (data?.type?.includes("mute-all")) {
-      toggleMic(false);
-    }
-  }, []);
-
   const {
-    initRtm,
-    getAttributes,
-    addOrUpdateAttributes,
+    initVoiceChat,
     getChanelMembers,
+    getAttributes,
+    micMuted,
+    toggleMic,
+    leaveRoom,
     leaveRtmChannel,
     channelClient,
-  } = useAgoraRTM({
+    addOrUpdateAttributes,
+    canActionFromRole,
+  } = useAgoraVoiceChat({
     appId,
     token,
     setMembers,
-    handleMessage,
   });
 
   const getRoomId = () => {
@@ -119,8 +103,6 @@ function App() {
     }
   };
 
-  const canMuteAll = roleCanMuteAll.includes(userRole);
-
   useEffect(() => {
     let idRoom = getRoomId() || "";
     setRoomId(idRoom);
@@ -131,12 +113,10 @@ function App() {
     const listMember = [];
 
     for (let i = 0; listChannelMember.length > i; i++) {
-      const data = await getAttributes(listChannelMember[i], [
-        "username",
-        "rtcUid",
-        "avatar",
-        "role"
-      ]);
+      const data = await getAttributes(
+        listChannelMember[i],
+        ATTRIBUTES_VOICE_CHAT
+      );
       listMember.push({
         ...data,
         id: listChannelMember[i],
@@ -152,14 +132,17 @@ function App() {
       return;
     }
     window.history.replaceState(null, null, `?room=${roomId}`);
-    await initRtc(roomId, rtcUid);
+    const micMuted = [ROLES.HOST, ROLES.CO_HOST]?.includes(userRole)
+      ? false
+      : true;
 
-    await initRtm(roomId, rtmUid);
+    await initVoiceChat(roomId, rtcUid.current, rtmUid.current, micMuted);
     await addOrUpdateAttributes({
       username,
-      rtcUid: rtcUid?.toString(),
+      rtcUid: rtcUid?.current?.toString(),
       avatar: avatarActive?.Image,
       role: userRole,
+      micMuted: micMuted?.toString(),
     });
     await handleGetMembers();
 
@@ -172,6 +155,19 @@ function App() {
     });
     await channelClient?.sendMessage({ text: message });
   };
+  const handleMuteAnotherUser = async (userId, isMuted) => {
+    const message = JSON.stringify({
+      type: "mute-user",
+      userId,
+      isMuted,
+    });
+    await channelClient?.sendMessage({ text: message });
+    await handleGetMembers();
+  };
+
+  const canActionMuteUser = (role) => {
+    return canActionFromRole(TYPE_ACTION.MUTE_USER, role);
+  };
 
   return (
     <>
@@ -182,16 +178,18 @@ function App() {
               <h1 id="room-name"></h1>
 
               <div id="room-header-controls">
-                <button id="mic-mute-all" onClick={handleMuteAll}>
-                  Mute all
-                </button>
+                {canActionFromRole(TYPE_ACTION.MUTE_ALL) && (
+                  <button id="mic-mute-all" onClick={handleMuteAll}>
+                    Mute all
+                  </button>
+                )}
                 <img
                   id="mic-icon"
                   className={`control-icon ${
                     micMuted ? "" : "control-icon-active"
                   }`}
                   src={micMuted ? MicOffIcon : MicOnIcon}
-                  onClick={toggleMic}
+                  onClick={() => toggleMic()}
                 />
                 <img
                   id="leave-icon"
@@ -219,6 +217,31 @@ function App() {
                     />
                     <p>
                       {item?.username} - {item?.role}
+                      {rtcUid?.current?.toString() !== item?.rtcUid && (
+                        <img
+                          id="mic-icon"
+                          className={`control-icon ${
+                            item?.micMuted === "true"
+                              ? ""
+                              : "control-icon-active"
+                          } ${
+                            canActionMuteUser(item?.role)
+                              ? ""
+                              : "control-icon-disable"
+                          }`}
+                          src={
+                            item?.micMuted === "true" ? MicOffIcon : MicOnIcon
+                          }
+                          onClick={() => {
+                            if (canActionMuteUser(item?.role)) {
+                              handleMuteAnotherUser(
+                                item?.rtcUid,
+                                item?.micMuted
+                              );
+                            }
+                          }}
+                        />
+                      )}
                     </p>
                   </div>
                 );
