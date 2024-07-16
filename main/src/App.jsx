@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import "./App.css";
 import LeaveIcon from "./assets/leave.svg";
 import MicOffIcon from "./assets/mic-off.svg";
@@ -17,7 +17,7 @@ import FeMale4 from "./assets/avatars/female-4.png";
 import FeMale5 from "./assets/avatars/female-5.png";
 import { ROLES, TYPE_ACTION } from "./constants";
 import { useAgoraVoiceChat } from "./useAgoraVoiceChat";
-import { ATTRIBUTES_VOICE_CHAT } from "./util";
+import { ATTRIBUTES_VOICE_CHAT, ROLE_CAN_ACTION_ACCEPT_TO_SPEAK } from "./util";
 
 function App() {
   const OPTIONS_AVATAR = [
@@ -64,7 +64,7 @@ function App() {
   ];
 
   const rtmUid = useRef(String(Math.floor(Math.random() * 2032)));
-  const rtcUid = useRef(Math.floor(Math.random() * 2032))
+  const rtcUid = useRef(Math.floor(Math.random() * 2032));
   const token = null;
   const appId = "f412b67c2b19405b8d12625c11f5e4bc";
 
@@ -81,13 +81,23 @@ function App() {
     initVoiceChat,
     getChanelMembers,
     getAttributes,
+    getRole,
     micMuted,
     toggleMic,
     leaveRoom,
     leaveRtmChannel,
     channelClient,
+    rtmClient,
     addOrUpdateAttributes,
     canActionFromRole,
+    muteAllFromHost,
+    setMuteAllFromHost,
+    getAttributesChannel,
+    addOrUpdateAttributesChannel,
+    listRequest,
+    setListRequest,
+    requestedToSpeak,
+    setRequestedToSpeak,
   } = useAgoraVoiceChat({
     appId,
     token,
@@ -125,6 +135,25 @@ function App() {
     setMembers(listMember);
   };
 
+  const handleAttributesChannel = async () => {
+    const dataAttributes = await getAttributesChannel([
+      "muteAllFromHost",
+      "listRequestSpeak",
+    ]);
+    if (dataAttributes?.muteAllFromHost?.value === "true") {
+      setMuteAllFromHost("true");
+    } else {
+      setMuteAllFromHost("false");
+    }
+    if (dataAttributes?.listRequestSpeak?.value) {
+      const arrRequest = JSON.parse(dataAttributes?.listRequestSpeak?.value);
+      const role = getRole();
+      if (ROLE_CAN_ACTION_ACCEPT_TO_SPEAK.includes(role)) {
+        setListRequest(arrRequest);
+      }
+    }
+  };
+
   const enterRoom = async (e) => {
     e.preventDefault();
     if (!avatarActive) {
@@ -144,20 +173,30 @@ function App() {
       role: userRole,
       micMuted: micMuted?.toString(),
     });
+
+    await handleAttributesChannel();
+
     await handleGetMembers();
 
     setIsJoin(true);
   };
 
-  const handleMuteAll = async () => {
+  const handleToggleMuteAll = async () => {
+    await addOrUpdateAttributesChannel({
+      muteAllFromHost: muteAllFromHost === "true" ? "false" : "true",
+    });
+    setMuteAllFromHost(muteAllFromHost === "true" ? "false" : "true");
     const message = JSON.stringify({
-      type: "mute-all",
+      type:
+        muteAllFromHost === "true"
+          ? TYPE_ACTION.UN_MUTE_ALL
+          : TYPE_ACTION.MUTE_ALL,
     });
     await channelClient?.sendMessage({ text: message });
   };
   const handleMuteAnotherUser = async (userId, isMuted) => {
     const message = JSON.stringify({
-      type: "mute-user",
+      type: TYPE_ACTION.MUTE_USER,
       userId,
       isMuted,
     });
@@ -167,6 +206,72 @@ function App() {
 
   const canActionMuteUser = (role) => {
     return canActionFromRole(TYPE_ACTION.MUTE_USER, role);
+  };
+
+  const handleRequestToSpeaker = async () => {
+    await addOrUpdateAttributes({
+      status: TYPE_ACTION.REQUEST_TO_SPEAKER,
+    });
+    const message = JSON.stringify({
+      type: TYPE_ACTION.REQUEST_TO_SPEAKER,
+      rtcUid: rtcUid?.current?.toString(),
+      username,
+    });
+    await channelClient?.sendMessage({ text: message });
+    setRequestedToSpeak(true);
+  };
+
+  const handleAcceptOrRejectToSpeaker = async (type, rtcUid) => {
+    const newListRequest = [...listRequest]?.filter(
+      (item) => item?.rtcUid.toString() !== rtcUid
+    );
+    setListRequest(newListRequest);
+    await addOrUpdateAttributesChannel({
+      listRequestSpeak: JSON.stringify(newListRequest),
+    });
+    const message = JSON.stringify({
+      type,
+      rtcUid,
+      username,
+    });
+    await channelClient?.sendMessage({ text: message });
+  };
+
+  const canActionUpdateRoleUser = (role) => {
+    return canActionFromRole(TYPE_ACTION.UPDATE_ROLE_USER, role);
+  };
+
+  const handleUpdateRole = async (role, rtcUid) => {
+    const message = JSON.stringify({
+      type: TYPE_ACTION.UPDATE_ROLE_USER,
+      rtcUid,
+      role,
+    });
+    await channelClient?.sendMessage({ text: message });
+  };
+
+  const renderUpdateRole = (role, rtcUid) => {
+    const arrRole = canActionUpdateRoleUser(role);
+    return (
+      <div>
+        {arrRole && arrRole?.length > 0 && (
+          <>
+            {arrRole?.map((item) => {
+              if (item !== role) {
+                return (
+                  <button
+                    onClick={() => handleUpdateRole(item, rtcUid)}
+                    key={item}
+                  >
+                    {item}
+                  </button>
+                );
+              }
+            })}
+          </>
+        )}
+      </div>
+    );
   };
 
   return (
@@ -179,18 +284,31 @@ function App() {
 
               <div id="room-header-controls">
                 {canActionFromRole(TYPE_ACTION.MUTE_ALL) && (
-                  <button id="mic-mute-all" onClick={handleMuteAll}>
-                    Mute all
+                  <button id="mic-mute-all" onClick={handleToggleMuteAll}>
+                    {muteAllFromHost === "true" ? "Un Mute all" : "Mute all"}
                   </button>
                 )}
-                <img
-                  id="mic-icon"
-                  className={`control-icon ${
-                    micMuted ? "" : "control-icon-active"
-                  }`}
-                  src={micMuted ? MicOffIcon : MicOnIcon}
-                  onClick={() => toggleMic()}
-                />
+                {canActionFromRole(TYPE_ACTION.TOGGLE_MUTE_SELF) ? (
+                  <>
+                    {rtmClient?.attributes?.role === ROLES?.LISTENER ? (
+                      <button onClick={handleRequestToSpeaker}>
+                        {requestedToSpeak ? "Requested" : "Request to speaker"}
+                      </button>
+                    ) : (
+                      <img
+                        id="mic-icon"
+                        className={`control-icon ${
+                          micMuted ? "" : "control-icon-active"
+                        }`}
+                        src={micMuted ? MicOffIcon : MicOnIcon}
+                        onClick={() => toggleMic()}
+                      />
+                    )}
+                  </>
+                ) : (
+                  "Block Mute From Host"
+                )}
+
                 <img
                   id="leave-icon"
                   className="control-icon"
@@ -218,35 +336,73 @@ function App() {
                     <p>
                       {item?.username} - {item?.role}
                       {rtcUid?.current?.toString() !== item?.rtcUid && (
-                        <img
-                          id="mic-icon"
-                          className={`control-icon ${
-                            item?.micMuted === "true"
-                              ? ""
-                              : "control-icon-active"
-                          } ${
-                            canActionMuteUser(item?.role)
-                              ? ""
-                              : "control-icon-disable"
-                          }`}
-                          src={
-                            item?.micMuted === "true" ? MicOffIcon : MicOnIcon
-                          }
-                          onClick={() => {
-                            if (canActionMuteUser(item?.role)) {
-                              handleMuteAnotherUser(
-                                item?.rtcUid,
-                                item?.micMuted
-                              );
+                        <div>
+                          <img
+                            id="mic-icon"
+                            className={`control-icon ${
+                              item?.micMuted === "true"
+                                ? ""
+                                : "control-icon-active"
+                            } ${
+                              canActionMuteUser(item?.role)
+                                ? ""
+                                : "control-icon-disable"
+                            }`}
+                            src={
+                              item?.micMuted === "true" ? MicOffIcon : MicOnIcon
                             }
-                          }}
-                        />
+                            onClick={() => {
+                              if (canActionMuteUser(item?.role)) {
+                                handleMuteAnotherUser(
+                                  item?.rtcUid,
+                                  item?.micMuted
+                                );
+                              }
+                            }}
+                          />
+                        </div>
                       )}
+                      {renderUpdateRole(item?.role, item?.rtcUid)}
                     </p>
                   </div>
                 );
               })}
             </div>
+            {ROLE_CAN_ACTION_ACCEPT_TO_SPEAK?.includes(
+              rtmClient?.attributes?.role
+            ) && (
+              <div id="list-request">
+                {listRequest?.map((item) => {
+                  return (
+                    <div key={item?.rtcUid} className="item-request">
+                      <div className="title">
+                        {item?.username} request to speaker
+                      </div>
+                      <button
+                        onClick={() =>
+                          handleAcceptOrRejectToSpeaker(
+                            TYPE_ACTION.ACCEPT_TO_SPEAKER,
+                            item?.rtcUid
+                          )
+                        }
+                      >
+                        accept
+                      </button>
+                      <button
+                        onClick={() =>
+                          handleAcceptOrRejectToSpeaker(
+                            TYPE_ACTION.REJECT_TO_SPEAKER,
+                            item?.rtcUid
+                          )
+                        }
+                      >
+                        reject
+                      </button>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
           </>
         ) : (
           <form id="form">

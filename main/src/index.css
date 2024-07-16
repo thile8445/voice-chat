@@ -80,6 +80,17 @@ body {
   flex-wrap: wrap;
   margin: 1em 0;
 }
+#list-request {
+  display: flex;
+  flex-wrap: wrap;
+  margin: 1em 0;
+  gap: 20px;
+}
+
+.item-request {
+  display: flex;
+  flex-direction: column;
+}
 
 .avatar-selection{
   height: 50px;

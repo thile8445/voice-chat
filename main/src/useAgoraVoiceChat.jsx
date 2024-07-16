@@ -1,13 +1,16 @@
 import AgoraRTC from "agora-rtc-sdk-ng";
 import AgoraRTM from "agora-rtm-sdk";
-import { useCallback, useRef, useState } from "react";
-import {
-  ATTRIBUTES_VOICE_CHAT,
-  ROLE_CAN_ACTION_MUTE_ALL,
-  ROLE_ENABLE_MUTE_ALL,
-  ROLE_MUTED_BY_CO_HOST,
-} from "./util";
+import { useRef, useState } from "react";
 import { ROLES, TYPE_ACTION } from "./constants";
+import {
+    ATTRIBUTES_VOICE_CHAT,
+    ROLE_CAN_ACTION_ACCEPT_TO_SPEAK,
+    ROLE_CAN_ACTION_MUTE_ALL,
+    ROLE_CO_HOST_CAN_UPDATE_ROLE_USER,
+    ROLE_ENABLE_MUTE_ALL,
+    ROLE_HOST_CAN_UPDATE_ROLE_USER,
+    ROLE_MUTED_BY_CO_HOST,
+} from "./util";
 
 export const useAgoraVoiceChat = ({ appId, token, setMembers }) => {
   const rtmClient = useRef(null);
@@ -15,7 +18,10 @@ export const useAgoraVoiceChat = ({ appId, token, setMembers }) => {
 
   // rtc
   const [micMuted, setMicMuted] = useState(true);
-  const [muteAllFromHost, setMuteAllFromHost] = useState(false);
+  const [muteAllFromHost, setMuteAllFromHost] = useState("false");
+
+  const [listRequest, setListRequest] = useState([]);
+  const [requestedToSpeak, setRequestedToSpeak] = useState(false);
 
   const rtcClient = useRef(null);
   const audioTracks = useRef({
@@ -29,22 +35,49 @@ export const useAgoraVoiceChat = ({ appId, token, setMembers }) => {
   };
 
   const canActionFromRole = (type = TYPE_ACTION.MUTE_ALL, roleOtherUser) => {
-    const roleUser = rtmClient.current.attributes?.role;
-    if (type === TYPE_ACTION.MUTE_USER) {
-      if (roleUser === ROLES.HOST && roleOtherUser !== ROLES.HOST) {
+    const roleUser = rtmClient.current?.attributes?.role;
+
+    switch (type) {
+      case TYPE_ACTION.MUTE_USER:
+        if (roleUser === ROLES.HOST && roleOtherUser !== ROLES.HOST) {
+          return true;
+        } else if (
+          roleUser === ROLES.CO_HOST &&
+          ROLE_MUTED_BY_CO_HOST.includes(roleOtherUser)
+        ) {
+          return true;
+        }
+        return false;
+
+      case TYPE_ACTION.TOGGLE_MUTE_SELF:
+        if (
+          ROLE_MUTED_BY_CO_HOST.includes(roleUser) &&
+          muteAllFromHost === "true"
+        ) {
+          return false;
+        }
         return true;
-      } else if (
-        roleUser === ROLES.CO_HOST &&
-        ROLE_MUTED_BY_CO_HOST.includes(roleOtherUser)
-      ) {
-        return true;
-      }
-      return false;
-    } else {
-      if (ROLE_CAN_ACTION_MUTE_ALL.includes(roleUser)) {
-        return true;
-      }
-      return false;
+
+      case TYPE_ACTION.UPDATE_ROLE_USER:
+        if (
+          roleUser === ROLES.HOST &&
+          ROLE_HOST_CAN_UPDATE_ROLE_USER.includes(roleOtherUser)
+        ) {
+          return ROLE_HOST_CAN_UPDATE_ROLE_USER;
+        }
+        if (
+          roleUser === ROLES.CO_HOST &&
+          ROLE_CO_HOST_CAN_UPDATE_ROLE_USER.includes(roleOtherUser)
+        ) {
+          return ROLE_CO_HOST_CAN_UPDATE_ROLE_USER;
+        }
+        return false;
+
+      default:
+        if (ROLE_CAN_ACTION_MUTE_ALL.includes(roleUser)) {
+          return true;
+        }
+        return false;
     }
   };
 
@@ -107,7 +140,7 @@ export const useAgoraVoiceChat = ({ appId, token, setMembers }) => {
 
   const handleSendNotificationUpdateAttributes = async () => {
     const message = JSON.stringify({
-      type: "update-attributes",
+      type: TYPE_ACTION.UPDATE_ATTRIBUTES,
     });
     await channelClient.current?.sendMessage({ text: message });
   };
@@ -142,12 +175,12 @@ export const useAgoraVoiceChat = ({ appId, token, setMembers }) => {
   const getInfoMembers = async () => {
     const listChannelMember = await channelClient.current.getMembers();
     const listMember = [];
-
     for (let i = 0; listChannelMember.length > i; i++) {
       const item = await rtmClient.current.getUserAttributesByKeys(
         listChannelMember[i],
         ATTRIBUTES_VOICE_CHAT
       );
+
       listMember.push({
         ...item,
         id: listChannelMember[i],
@@ -156,7 +189,7 @@ export const useAgoraVoiceChat = ({ appId, token, setMembers }) => {
     return listMember;
   };
 
-  const handleMemberJoined = async () => {
+  const handleMemberJoined = async (memberId) => {
     await setMembersWhenUpdate();
   };
 
@@ -165,19 +198,95 @@ export const useAgoraVoiceChat = ({ appId, token, setMembers }) => {
     setMembers(listMember?.filter((item) => item?.id !== memberId));
   };
 
+  const updateListRequestToSpeakWhenAcceptOrReject = async () => {
+    const roleUser = rtmClient.current?.attributes?.role;
+    if (ROLE_CAN_ACTION_ACCEPT_TO_SPEAK.includes(roleUser)) {
+      const dataList = await getAttributesChannel(["listRequestSpeak"]);
+      const listRequestSpeak = dataList?.listRequestSpeak
+        ? JSON.parse(dataList?.listRequestSpeak?.value)
+        : [];
+      const newListRequest = listRequestSpeak?.filter(
+        (item) => item?.rtcUid.toString() !== data?.rtcUid.toString()
+      );
+      setListRequest(newListRequest);
+      await addOrUpdateAttributesChannel({
+        listRequestSpeak: JSON.stringify(newListRequest),
+      });
+    }
+  };
+
   const handleMessage = async (message) => {
     const data = JSON.parse(message?.text);
-    if (data?.type?.includes("mute-user")) {
-      if (data?.userId.toString() === rtcClient.current?.uid.toString()) {
-        toggleMic(data?.isMuted === "true");
-      }
-    } else if (data?.type?.includes("mute-all")) {
-      if (ROLE_ENABLE_MUTE_ALL.includes(rtmClient.current.attributes?.role)) {
-        setMuteAllFromHost(true);
-        toggleMic(false);
-      }
-    } else if (data?.type?.includes("update-attributes")) {
-      await setMembersWhenUpdate();
+    const roleUser = rtmClient.current?.attributes?.role;
+    switch (data?.type) {
+      case TYPE_ACTION.MUTE_USER:
+        if (data?.userId.toString() === rtcClient.current?.uid.toString()) {
+          toggleMic(data?.isMuted === "true");
+        }
+        setMuteAllFromHost(muteAllFromHost === "true" ? "false" : "true");
+        break;
+
+      case TYPE_ACTION.MUTE_ALL:
+        if (ROLE_ENABLE_MUTE_ALL.includes(roleUser)) {
+          toggleMic(false);
+        }
+        setMuteAllFromHost("true");
+        break;
+
+      case TYPE_ACTION.UN_MUTE_ALL:
+        setMuteAllFromHost("false");
+        break;
+
+      case TYPE_ACTION.REQUEST_TO_SPEAKER:
+        if (ROLE_CAN_ACTION_ACCEPT_TO_SPEAK.includes(roleUser)) {
+          const dataList = await getAttributesChannel(["listRequestSpeak"]);
+          const newListRequest = dataList?.listRequestSpeak
+            ? JSON.parse(dataList?.listRequestSpeak?.value)
+            : [];
+
+          newListRequest.push(data);
+          await addOrUpdateAttributesChannel({
+            listRequestSpeak: JSON.stringify(newListRequest),
+          });
+          setListRequest(newListRequest);
+        }
+        break;
+
+      case TYPE_ACTION.ACCEPT_TO_SPEAKER:
+        await updateListRequestToSpeakWhenAcceptOrReject();
+        if (data?.rtcUid.toString() === rtcClient.current?.uid.toString()) {
+          await addOrUpdateAttributes({
+            role: ROLES.SPEAKER,
+          });
+          setRequestedToSpeak(false);
+          await setMembersWhenUpdate();
+          await handleSendNotificationUpdateAttributes();
+        }
+        break;
+
+      case TYPE_ACTION.UPDATE_ROLE_USER:
+        if (data?.rtcUid.toString() === rtcClient.current?.uid.toString()) {
+          await addOrUpdateAttributes({
+            role: data?.role?.toString(),
+          });
+          await setMembersWhenUpdate();
+          await handleSendNotificationUpdateAttributes();
+        }
+        break;
+
+      case TYPE_ACTION.REJECT_TO_SPEAKER:
+        await updateListRequestToSpeakWhenAcceptOrReject();
+        if (data?.rtcUid.toString() === rtcClient.current?.uid.toString()) {
+          setRequestedToSpeak(false);
+        }
+        break;
+
+      case TYPE_ACTION.UPDATE_ATTRIBUTES:
+        await setMembersWhenUpdate();
+        break;
+
+      default:
+        break;
     }
   };
 
@@ -203,11 +312,36 @@ export const useAgoraVoiceChat = ({ appId, token, setMembers }) => {
     await rtmClient.current.addOrUpdateLocalUserAttributes(data);
   };
 
+  const addOrUpdateAttributesChannel = async (data) => {
+    await rtmClient.current.addOrUpdateChannelAttributes(
+      channelClient.current.channelId,
+      data
+    );
+  };
+
   const getAttributes = async (memberId, arrAttributes) => {
     return await rtmClient.current.getUserAttributesByKeys(
       memberId,
       arrAttributes
     );
+  };
+
+  const getAttributesChannel = async (arrAttributes) => {
+    return await rtmClient.current?.getChannelAttributesByKeys(
+      channelClient.current?.channelId,
+      arrAttributes
+    );
+  };
+
+  const clearAttributesChannel = async (arrAttributes) => {
+    await rtmClient.current?.deleteChannelAttributesByKeys(
+      channelClient.current?.channelId,
+      arrAttributes
+    );
+  };
+
+  const getRole = () => {
+    return rtmClient.current?.attributes?.role;
   };
 
   const getChanelMembers = async () => {
@@ -229,7 +363,10 @@ export const useAgoraVoiceChat = ({ appId, token, setMembers }) => {
     audioTracks: audioTracks.current,
     rtmClient: rtmClient.current,
     channelClient: channelClient.current,
+    getRole,
     micMuted,
+    muteAllFromHost,
+    setMuteAllFromHost,
     initVoiceChat,
     toggleMic,
     leaveRoom,
@@ -238,5 +375,11 @@ export const useAgoraVoiceChat = ({ appId, token, setMembers }) => {
     getChanelMembers,
     canActionFromRole,
     leaveRtmChannel,
+    getAttributesChannel,
+    addOrUpdateAttributesChannel,
+    listRequest,
+    setListRequest,
+    requestedToSpeak,
+    setRequestedToSpeak,
   };
 };
